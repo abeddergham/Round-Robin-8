@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Round Robin Ranker</title>
+  <meta name="theme-color" content="#0f172a" />
+  <style>
+    :root { --bg:#f3f4f6; --card:#fff; --line:#444; --head:#e5e5e5; --text:#000; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Arial, Helvetica, sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width:1600px; margin:0 auto; padding:8px; }
+    .topbar { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+    .title { font-size:24px; font-weight:700; }
+    .subtitle { font-size:13px; color:#444; margin-top:2px; }
+    .btn { border:1px solid #666; background:#fff; padding:8px 12px; border-radius:10px; font-weight:700; cursor:pointer; }
+    .card { background:#fff; border-radius:12px; padding:8px; overflow:auto; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+    table { width:100%; min-width:1360px; border-collapse:collapse; table-layout:fixed; background:#fff; }
+    td { border:1px solid var(--line); text-align:center; vertical-align:middle; padding:0; }
+    .rr { width:185px; background:var(--head); }
+    .rrInner { height:218px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:36px; font-weight:700; }
+    .rrInner .n { font-size:68px; line-height:1; }
+    .rrInner .t { font-size:76px; line-height:1; }
+    .blankHead { width:240px; background:var(--head); }
+        .gameHead { width:140px; background:var(--head); font-weight:700; font-size:18px; height:36px; }
+    .matchCell { background:var(--head); white-space:pre-line; font-weight:700; line-height:1.45; font-size:16px; padding:8px 4px; height:92px; width:140px; }
+    .rotHead { width:54px; background:var(--head); font-weight:700; writing-mode:vertical-rl; text-orientation:mixed; transform:rotate(180deg); font-size:18px; letter-spacing:.5px; }
+    .playerMerge { background:#fff; height:52px; padding:0 8px; width:240px; }
+    .playerWrap { display:flex; align-items:center; gap:8px; width:100%; }
+    .playerNum { font-weight:700; font-size:18px; min-width:18px; text-align:left; }
+    .playerName { flex:1; border:0; outline:none; background:transparent; font-size:15px; padding:8px 4px; text-align:left; }
+    .scoreInput, .courtInput { width:100%; height:100%; border:0; outline:none; background:transparent; text-align:center; font-size:18px; font-weight:700; padding:10px 4px; }
+    .tot { font-size:18px; font-weight:700; background:#fff; }
+                .note { margin-top:8px; border:1px solid #cbd5e1; border-radius:10px; padding:10px; font-size:13px; line-height:1.5; color:#333; background:#fafafa; }
+    @media (max-width:700px) {
+      .title { font-size:20px; }
+      .rrInner .n { font-size:52px; }
+      .rrInner .t { font-size:58px; }
+      .scoreInput, .courtInput { font-size:16px; }
+      .matchCell { font-size:14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <div class="title">Round Robin Ranker</div>
+        <div class="subtitle">Same sheet design, with all rows aligned and no Court column.</div>
+      </div>
+      <button class="btn" id="resetBtn">Reset</button>
+    </div>
+
+    <div class="card">
+      <table id="sheet"></table>
+      <div class="note">
+        Example: in <strong>Game 1</strong>, if <strong>1 &amp; 2</strong> beat <strong>3 &amp; 5</strong> with <strong>10</strong>, then player 1 = 10, player 2 = 10, player 3 = 0, and player 5 = 0. Teammates always share the same score, and the opposite team gets 0.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const defaultPlayers = ["","","","","","","",""];
+    const rounds = [
+      { name:"Game 1", matches:[ { a:[1,2], b:[3,5] }, { a:[6,8], b:[4,7] } ] },
+      { name:"Game 2", matches:[ { a:[5,6], b:[2,7] }, { a:[1,4], b:[3,8] } ] },
+      { name:"Game 3", matches:[ { a:[2,3], b:[4,6] }, { a:[7,8], b:[1,5] } ] },
+      { name:"Game 4", matches:[ { a:[6,7], b:[1,3] }, { a:[2,5], b:[4,8] } ] },
+      { name:"Game 5", matches:[ { a:[3,4], b:[5,7] }, { a:[1,8], b:[2,6] } ] },
+      { name:"Game 6", matches:[ { a:[2,8], b:[3,7] }, { a:[4,5], b:[1,6] } ] },
+      { name:"Game 7", matches:[ { a:[1,7], b:[2,4] }, { a:[3,6], b:[5,8] } ] }
+    ];
+
+    function newState() {
+      return {
+        players:[...defaultPlayers],
+        scores:rounds.map(r => r.matches.map(() => ({ a:"", b:"" })))
+      };
+    }
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem("roundRobinRankerStateV5");
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function saveState() {
+      localStorage.setItem("roundRobinRankerStateV5", JSON.stringify(state));
+    }
+
+    let state = loadState() || newState();
+
+    function playerLabel(playerNumber) {
+      return (state.players[playerNumber - 1] || "").trim() || String(playerNumber);
+    }
+
+    function teamLabel(team) {
+      return `${playerLabel(team[0])} & ${playerLabel(team[1])}`;
+    }
+
+    function findPlayerCell(roundIndex, playerNumber) {
+      const round = rounds[roundIndex];
+      for (let matchIndex = 0; matchIndex < round.matches.length; matchIndex++) {
+        const match = round.matches[matchIndex];
+        if (match.a.includes(playerNumber)) return { matchIndex, side:"a" };
+        if (match.b.includes(playerNumber)) return { matchIndex, side:"b" };
+      }
+      return null;
+    }
+
+    function applyMatchResult(roundIndex, matchIndex, winningSide, scoreText) {
+      const clean = String(scoreText || "").replace(/[^\d]/g, "");
+      state.scores[roundIndex][matchIndex] = { a:"", b:"" };
+
+      if (clean === "") return;
+
+      const n = Number(clean);
+      if (!Number.isFinite(n) || n < 0) return;
+
+      if (winningSide === "a") {
+        state.scores[roundIndex][matchIndex] = { a:String(n), b:"0" };
+      } else {
+        state.scores[roundIndex][matchIndex] = { a:"0", b:String(n) };
+      }
+    }
+
+    function getStandings() {
+      const totals = Array.from({ length:8 }, (_, i) => ({
+        playerNumber:i + 1,
+        wins:0,
+        points:0,
+        rank:0
+      }));
+
+      rounds.forEach((round, roundIndex) => {
+        round.matches.forEach((match, matchIndex) => {
+          const aText = state.scores[roundIndex][matchIndex].a;
+          const bText = state.scores[roundIndex][matchIndex].b;
+          if (aText === "" || bText === "") return;
+
+          const a = Number(aText);
+          const b = Number(bText);
+          if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+
+          match.a.forEach(p => totals[p - 1].points += a);
+          match.b.forEach(p => totals[p - 1].points += b);
+
+          if (a > b) {
+            match.a.forEach(p => totals[p - 1].wins += 1);
+          } else if (b > a) {
+            match.b.forEach(p => totals[p - 1].wins += 1);
+          }
+        });
+      });
+
+      const sorted = [...totals].sort((x, y) => {
+        if (y.wins !== x.wins) return y.wins - x.wins;
+        if (y.points !== x.points) return y.points - x.points;
+        return x.playerNumber - y.playerNumber;
+      });
+
+      sorted.forEach((row, idx) => {
+        totals[row.playerNumber - 1].rank = idx + 1;
+      });
+
+      return totals;
+    }
+
+    function renderStatic() {
+      const table = document.getElementById("sheet");
+      let html = "";
+
+      html += "<tr>";
+      html += '<td class="rr" rowspan="3"><div class="rrInner"><div class="n">8</div><div class="t">RR</div></div></td>';
+
+      rounds.forEach(r => html += `<td class="gameHead">${r.name}</td>`);
+      html += '<td class="rotHead" rowspan="3">Total Wins</td>';
+      html += '<td class="rotHead" rowspan="3">Total Points</td>';
+      html += '<td class="rotHead" rowspan="3">Ranking</td>';
+      html += "</tr>";
+
+      html += "<tr>";
+
+      rounds.forEach((r, idx) => html += `<td class="matchCell" id="match-top-${idx}"></td>`);
+      html += "</tr>";
+
+      html += "<tr>";
+
+      rounds.forEach((r, idx) => html += `<td class="matchCell" id="match-bottom-${idx}"></td>`);
+      html += "</tr>";
+
+      for (let p = 1; p <= 8; p++) {
+        html += "<tr>";
+        html += `<td class="playerMerge"><div class="playerWrap"><span class="playerNum">${p}</span><input class="playerName" id="player-name-${p}" placeholder="Player ${p} name" /></div></td>`;
+
+
+        for (let roundIndex = 0; roundIndex < rounds.length; roundIndex++) {
+          html += `<td><input class="scoreInput" id="score-${p}-${roundIndex}" inputmode="numeric" /></td>`;
+        }
+
+        html += `<td class="tot" id="wins-${p}"></td>`;
+        html += `<td class="tot" id="points-${p}"></td>`;
+        html += `<td class="tot" id="rank-${p}"></td>`;
+        html += "</tr>";
+      }
+
+      table.innerHTML = html;
+    }
+
+    function refresh() {
+      const standings = getStandings();
+
+      for (let i = 0; i < rounds.length; i++) {
+        document.getElementById(`match-top-${i}`).textContent = `${teamLabel(rounds[i].matches[0].a)}\nvs\n${teamLabel(rounds[i].matches[0].b)}`;
+        document.getElementById(`match-bottom-${i}`).textContent = `${teamLabel(rounds[i].matches[1].a)}\nvs\n${teamLabel(rounds[i].matches[1].b)}`;
+      }
+
+      for (let p = 1; p <= 8; p++) {
+        const nameInput = document.getElementById(`player-name-${p}`);
+        if (document.activeElement !== nameInput) nameInput.value = state.players[p - 1] || "";
+
+        for (let roundIndex = 0; roundIndex < rounds.length; roundIndex++) {
+          const ref = findPlayerCell(roundIndex, p);
+          const value = ref ? state.scores[roundIndex][ref.matchIndex][ref.side] : "";
+          const input = document.getElementById(`score-${p}-${roundIndex}`);
+          if (document.activeElement !== input) input.value = value;
+        }
+
+        document.getElementById(`wins-${p}`).textContent = standings[p - 1].wins;
+        document.getElementById(`points-${p}`).textContent = standings[p - 1].points;
+        document.getElementById(`rank-${p}`).textContent = standings[p - 1].rank;
+      }
+    }
+
+    function attachEvents() {
+      for (let p = 1; p <= 8; p++) {
+        const nameInput = document.getElementById(`player-name-${p}`);
+        nameInput.addEventListener("input", e => {
+          state.players[p - 1] = e.target.value;
+          saveState();
+          refresh();
+        });
+      }
+
+      for (let p = 1; p <= 8; p++) {
+        for (let roundIndex = 0; roundIndex < rounds.length; roundIndex++) {
+          const input = document.getElementById(`score-${p}-${roundIndex}`);
+          input.addEventListener("input", e => {
+            const value = e.target.value.replace(/[^\d]/g, "");
+            e.target.value = value;
+
+            const ref = findPlayerCell(roundIndex, p);
+            if (!ref) return;
+
+            applyMatchResult(roundIndex, ref.matchIndex, ref.side, value);
+            saveState();
+            refresh();
+          });
+        }
+      }
+    }
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      if (!confirm("Reset all names and scores?")) return;
+      state = newState();
+      saveState();
+      refresh();
+    });
+
+    renderStatic();
+    attachEvents();
+    refresh();
+  </script>
+</body>
+</html>
